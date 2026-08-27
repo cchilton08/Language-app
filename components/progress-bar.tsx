@@ -1,0 +1,1 @@
+export function ProgressBar({ value }: { value: number }) { return <div className="h-2 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-[#e8672e]" style={{ width: `${value}%` }} /></div>; }
