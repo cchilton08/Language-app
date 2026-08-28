@@ -66,22 +66,29 @@ export async function POST(request: Request) {
     const learnedChunks = Array.isArray(body?.learnedChunks) ? body.learnedChunks.slice(0, 10) : [];
     const mistakes = Array.isArray(body?.commonMistakes) ? body.commonMistakes.slice(0, 8) : [];
 
-    const instructions = `Create a short adaptive Dutch quiz for an English-speaking learner of STANDARD NETHERLANDS DUTCH (nl-NL), level ${level}/4.
+    const instructions = `Create a short adaptive Dutch RETRIEVAL quiz for an English-speaking learner of natural STANDARD NETHERLANDS DUTCH (nl-NL), level ${level}/4.
 
-Use the learner's actual recent conversation, weak vocabulary, newly learned chunks, and recurring mistakes. Test production and comprehension, not recognition.
+PEDAGOGY
+The quiz should strengthen long-term conversational ability, not just recognition. Prioritize active recall, transfer to new contexts, corrective feedback readiness, and retrieval of weak/recent material.
+- Roughly 60-70% of questions should target weak words, recent chunks, recurring mistakes, or structures just used in conversation.
+- Roughly 30-40% should test TRANSFER: the same useful language in a new sentence/context so the learner cannot simply memorize the previous wording.
+- Prefer production over multiple-choice recognition. Never provide answer banks except the scrambled tokens required in Part 4.
+- Use high-frequency, useful, everyday Dutch and natural word order.
+- Keep the quiz challenging enough to reveal gaps but fair for level ${level}.
 
 Required structure:
-- Part 1: 3-4 vocabulary recall questions. Prompt is English; the learner must type the Dutch dictionary form or exact useful chunk. Set word to the Dutch answer so mastery can be tracked. Prefer weak/recent words.
-- Part 2: 3 English → Dutch sentence translations using useful beginner/intermediate sentences.
-- Part 3: 3 Dutch → English sentences. These MUST be completely different sentences and ideas from Part 2 so they never reveal Part 2 answers.
-- Part 4: 2 build-the-sentence questions. Prompt begins with "Build:" and gives the English target. tokens must contain all required Dutch words scrambled PLUS 2-4 believable distractor words. Sentences should be 6-10 required words, not trivial 3-word sentences.
-- Part 5: 2 open-ended Dutch conversation questions with no single memorized answer.
+- Part 1: 3-4 vocabulary/chunk recall questions. Prompt is English; learner types the Dutch dictionary form or exact useful chunk. Set word to the Dutch answer so mastery can be tracked. Prefer weak/recent items.
+- Part 2: 3 English → Dutch sentence translations. Use natural sentences that require productive recall. At least one should reuse a weak/recent item in a DIFFERENT context from the conversation.
+- Part 3: 3 Dutch → English sentences. These MUST use different sentences and ideas from Part 2 and must not reveal Part 2 answers.
+- Part 4: 2 build-the-sentence questions. Prompt begins with "Build:" and gives the English target. tokens must contain all required Dutch words scrambled PLUS 2-4 believable distractor words. Sentences should require 6-10 target words and meaningful word-order decisions.
+- Part 5: 2 open-ended Dutch conversation questions. No single memorized answer. Questions should make the learner spontaneously use recent/weak language when natural.
 
-Rules:
-- Do not repeat the exact same question across parts.
+Quality rules:
+- Do not repeat exact questions across parts.
+- Do not copy a full corrected sentence from the recent conversation as a question; transform it into a new situation.
+- Do not make Part 2 and Part 3 mirror each other.
+- Avoid obscure vocabulary, trick questions, and unnatural literal translations.
 - Use natural Dutch people in the Netherlands would actually say.
-- Keep difficulty challenging but fair for level ${level}.
-- Prefer high-frequency useful language over obscure vocabulary.
 - Return 13-14 total questions when possible.
 - For non-vocabulary questions, set word=null. For questions without word-bank tokens, set tokens=null.
 
@@ -97,7 +104,7 @@ Recent conversation: ${JSON.stringify(transcript)}`;
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions,
-        input: "Generate the personalized quiz now.",
+        input: "Generate the personalized retrieval quiz now.",
         max_output_tokens: 2200,
         text: {
           verbosity: "low",
