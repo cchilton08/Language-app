@@ -6,6 +6,7 @@ type Tab = "home" | "learn" | "review" | "quiz" | "progress";
 type Stage = "review" | "conversation";
 type ActiveMode = "learn" | "quiz";
 type Correction = { wrong: string; better: string; why: string; clue?: string };
+type LearnedChunk = { dutch: string; english: string; pronunciation: string };
 type ChatMessage = {
   role: "assistant" | "user";
   text: string;
@@ -42,8 +43,6 @@ type QuizQuestion = {
   id: string;
   part: 1 | 2 | 3 | 4 | 5;
   prompt: string;
-  dutch?: string;
-  english?: string;
   word?: string;
   tokens?: string[];
 };
@@ -52,6 +51,29 @@ type QuizGrade = {
   items: { id: string; correct: boolean; points: number; correction?: string; explanation?: string }[];
   coachNote?: string;
 };
+type SavedSession = {
+  savedAt: number;
+  activeMode: ActiveMode;
+  minutes: number;
+  stage: Stage;
+  messages: ChatMessage[];
+  turns: number;
+  pendingRetry: Correction | null;
+  reviewQueue: VocabularyWord[];
+  reviewIndex: number;
+  reviewInput: string;
+  reviewResult: "correct" | "wrong" | null;
+  shownTranslations: Record<number, boolean>;
+  shownHints: Record<number, boolean>;
+  shownAnswers: Record<number, boolean>;
+  quizQuestions: QuizQuestion[];
+  quizAnswers: Record<string, string>;
+  quizGrade: QuizGrade | null;
+  sessionLearned: LearnedChunk[];
+};
+
+const PROGRESS_KEY = "dutch-tutor-progress-v2";
+const ACTIVE_KEY = "dutch-tutor-active-v2";
 
 const day = (offset = 0) => {
   const d = new Date();
@@ -60,6 +82,7 @@ const day = (offset = 0) => {
 };
 const normalize = (s: string) => s.trim().toLocaleLowerCase("nl-NL").replace(/[.!?]/g, "").replace(/\s+/g, " ");
 const uid = () => Math.random().toString(36).slice(2, 10);
+const cleanDisplay = (s: string) => s.replace(/\*\*/g, "");
 
 const STARTER_WORDS: VocabularyWord[] = [
   { id: "denken", dutch: "denken", english: "to think", pronunciation: "DEN-ken", mastery: 42, correctRecall: 3, wrongRecall: 4, correctUse: 1, wrongUse: 2, nextReview: day(0) },
@@ -96,7 +119,7 @@ const starterMessages: ChatMessage[] = [{
   hint: "Start with: Ik ...",
 }];
 
-const QUIZ: QuizQuestion[] = [
+const FALLBACK_QUIZ: QuizQuestion[] = [
   { id: "v1", part: 1, prompt: "to think", word: "denken" },
   { id: "v2", part: 1, prompt: "money", word: "geld" },
   { id: "v3", part: 1, prompt: "to give", word: "geven" },
@@ -115,7 +138,7 @@ const QUIZ: QuizQuestion[] = [
 
 function migrateProgress(): ProgressState {
   try {
-    const v2 = localStorage.getItem("dutch-tutor-progress-v2");
+    const v2 = localStorage.getItem(PROGRESS_KEY);
     if (v2) return JSON.parse(v2);
     const old = localStorage.getItem("dutch-tutor-progress-v1");
     if (old) {
@@ -157,14 +180,64 @@ export default function Home() {
   const [shownTranslations, setShownTranslations] = useState<Record<number, boolean>>({});
   const [shownHints, setShownHints] = useState<Record<number, boolean>>({});
   const [shownAnswers, setShownAnswers] = useState<Record<number, boolean>>({});
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>(FALLBACK_QUIZ);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizGrade, setQuizGrade] = useState<QuizGrade | null>(null);
+  const [quizLoading, setQuizLoading] = useState(false);
   const [grading, setGrading] = useState(false);
   const [activeMode, setActiveMode] = useState<ActiveMode | null>(null);
+  const [sessionLearned, setSessionLearned] = useState<LearnedChunk[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { setProgress(migrateProgress()); setLoaded(true); }, []);
-  useEffect(() => { if (loaded) { try { localStorage.setItem("dutch-tutor-progress-v2", JSON.stringify(progress)); } catch {} } }, [progress, loaded]);
+  useEffect(() => {
+    setProgress(migrateProgress());
+    try {
+      const raw = localStorage.getItem(ACTIVE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as SavedSession;
+        const fresh = Date.now() - saved.savedAt < 7 * 24 * 60 * 60 * 1000;
+        if (fresh && saved.activeMode) {
+          setMinutes(saved.minutes || 10);
+          setStage(saved.stage || "conversation");
+          setMessages(saved.messages?.length ? saved.messages : starterMessages);
+          setTurns(saved.turns || 0);
+          setPendingRetry(saved.pendingRetry || null);
+          setReviewQueue(saved.reviewQueue || []);
+          setReviewIndex(saved.reviewIndex || 0);
+          setReviewInput(saved.reviewInput || "");
+          setReviewResult(saved.reviewResult || null);
+          setShownTranslations(saved.shownTranslations || {});
+          setShownHints(saved.shownHints || {});
+          setShownAnswers(saved.shownAnswers || {});
+          setQuizQuestions(saved.quizQuestions?.length ? saved.quizQuestions : FALLBACK_QUIZ);
+          setQuizAnswers(saved.quizAnswers || {});
+          setQuizGrade(saved.quizGrade || null);
+          setSessionLearned(saved.sessionLearned || []);
+          setActiveMode(saved.activeMode);
+          setTab(saved.activeMode);
+        } else localStorage.removeItem(ACTIVE_KEY);
+      }
+    } catch { localStorage.removeItem(ACTIVE_KEY); }
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); } catch {}
+  }, [progress, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!activeMode) {
+      try { localStorage.removeItem(ACTIVE_KEY); } catch {}
+      return;
+    }
+    const saved: SavedSession = {
+      savedAt: Date.now(), activeMode, minutes, stage, messages, turns, pendingRetry, reviewQueue, reviewIndex,
+      reviewInput, reviewResult, shownTranslations, shownHints, shownAnswers, quizQuestions, quizAnswers, quizGrade, sessionLearned,
+    };
+    try { localStorage.setItem(ACTIVE_KEY, JSON.stringify(saved)); } catch {}
+  }, [loaded, activeMode, minutes, stage, messages, turns, pendingRetry, reviewQueue, reviewIndex, reviewInput, reviewResult, shownTranslations, shownHints, shownAnswers, quizQuestions, quizAnswers, quizGrade, sessionLearned]);
 
   const dueWords = useMemo(() => progress.vocabulary.filter(w => w.nextReview <= day(0)).sort((a,b) => a.mastery - b.mastery), [progress.vocabulary]);
   const avgScore = useMemo(() => Math.round(progress.recentScores.reduce((a,b) => a+b,0) / Math.max(progress.recentScores.length, 1)), [progress.recentScores]);
@@ -176,12 +249,14 @@ export default function Home() {
   }
 
   function startSession(m: number) {
+    if (activeMode && !window.confirm("Start a new session? Your current in-progress session will be replaced.")) return;
     const reviewCount = m === 5 ? 3 : m === 10 ? 5 : 8;
     const queue = dueWords.slice(0, reviewCount);
     setMinutes(m); setTurns(0); setPendingRetry(null); setMessages(starterMessages); setApiError("");
     setReviewQueue(queue); setReviewIndex(0); setReviewInput(""); setReviewResult(null);
     setStage(queue.length ? "review" : "conversation"); setActiveMode("learn"); setTab("learn");
     setShownTranslations({}); setShownHints({}); setShownAnswers({});
+    setQuizQuestions(FALLBACK_QUIZ); setQuizAnswers({}); setQuizGrade(null); setSessionLearned([]);
   }
 
   function resumeActive() {
@@ -191,6 +266,7 @@ export default function Home() {
 
   function finishSession() {
     setActiveMode(null);
+    setQuizAnswers({}); setQuizGrade(null); setSessionLearned([]);
     setTab("home");
   }
 
@@ -218,8 +294,13 @@ export default function Home() {
     }
   }
 
-  function addLearnedWords(items: any[]) {
+  function addLearnedWords(items: LearnedChunk[]) {
     if (!Array.isArray(items) || !items.length) return;
+    setSessionLearned(prev => {
+      const merged = [...prev];
+      for (const item of items) if (item?.dutch && !merged.some(x => normalize(x.dutch) === normalize(item.dutch))) merged.push(item);
+      return merged.slice(-20);
+    });
     setProgress(prev => {
       const vocab = [...prev.vocabulary];
       let added = 0;
@@ -251,15 +332,16 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Tutor request failed");
       const correction = data.correction?.better ? data.correction as Correction : undefined;
-      setMessages(prev => [...prev, {
-        role: "assistant", text: data.reply || "Goed! Vertel me meer.", translation: data.translation, hint: data.hint,
-        correction, retryRequired: Boolean(data.retryRequired),
-      }]);
+      const reply = typeof data.reply === "string" ? cleanDisplay(data.reply) : "Goed! Vertel me meer.";
+      setMessages(prev => [...prev, { role: "assistant", text: reply, translation: data.translation, hint: data.hint, correction, retryRequired: Boolean(data.retryRequired) }]);
       setTurns(t => t + 1);
       setPendingRetry(data.retryRequired && correction ? correction : null);
       addLearnedWords(data.learnedChunks || []);
       if (correction) {
         setProgress(prev => ({ ...prev, commonMistakes: [{ wrong: correction.wrong, correct: correction.better, why: correction.why }, ...prev.commonMistakes.filter(m => m.wrong !== correction.wrong)].slice(0, 15) }));
+      } else {
+        const used = progress.vocabulary.filter(w => normalize(text).includes(normalize(w.dutch)) && w.mastery < 80);
+        if (used.length) setProgress(prev => ({ ...prev, vocabulary: prev.vocabulary.map(w => used.some(u => u.dutch === w.dutch) ? { ...w, correctUse: w.correctUse + 1, mastery: Math.min(100, w.mastery + 2), lastSeen: day(0) } : w) }));
       }
     } catch (err) { setApiError(err instanceof Error ? err.message : "Could not reach the tutor."); }
     finally { setLoading(false); }
@@ -268,7 +350,7 @@ export default function Home() {
   function speak(text: string) {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(cleanDisplay(text));
     utterance.lang = "nl-NL"; utterance.rate = 0.92;
     const voices = window.speechSynthesis.getVoices();
     const voice = voices.find(v => v.lang.toLowerCase().startsWith("nl-nl")) || voices.find(v => v.lang.toLowerCase().startsWith("nl"));
@@ -287,16 +369,37 @@ export default function Home() {
     rec.start();
   }
 
-  function beginQuiz() { setQuizAnswers({}); setQuizGrade(null); setActiveMode("quiz"); setTab("quiz"); }
+  async function beginQuiz() {
+    if (activeMode === "quiz" && quizQuestions.length) { setTab("quiz"); return; }
+    setQuizAnswers({}); setQuizGrade(null); setActiveMode("quiz"); setTab("quiz"); setQuizLoading(true); setApiError("");
+    try {
+      const res = await fetch("/api/quiz/generate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          level: immersionLevel,
+          transcript: messages.slice(-16),
+          weakWords: [...progress.vocabulary].sort((a,b) => a.mastery - b.mastery).slice(0, 12).map(w => ({ dutch: w.dutch, english: w.english })),
+          learnedChunks: sessionLearned.slice(-10),
+          commonMistakes: progress.commonMistakes.slice(0, 8),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !Array.isArray(data.questions) || data.questions.length < 8) throw new Error(data?.error || "Could not build adaptive quiz");
+      setQuizQuestions(data.questions);
+    } catch (err) {
+      setQuizQuestions(FALLBACK_QUIZ);
+      setApiError(`${err instanceof Error ? err.message : "Adaptive quiz unavailable."} Using the built-in quiz instead.`);
+    } finally { setQuizLoading(false); }
+  }
 
   async function gradeQuiz(e: FormEvent) {
-    e.preventDefault(); setGrading(true); setQuizGrade(null);
+    e.preventDefault(); setGrading(true); setQuizGrade(null); setApiError("");
     try {
-      const res = await fetch("/api/quiz", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ questions: QUIZ, answers: quizAnswers, level: immersionLevel }) });
+      const res = await fetch("/api/quiz", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ questions: quizQuestions, answers: quizAnswers, level: immersionLevel }) });
       const data = await res.json(); if (!res.ok) throw new Error(data?.error || "Could not grade quiz");
       const grade = data as QuizGrade; setQuizGrade(grade);
       setProgress(prev => ({ ...prev, lastQuiz: grade.score, sessions: prev.sessions + 1, recentScores: [...prev.recentScores, grade.score].slice(-8) }));
-      for (const q of QUIZ.filter(q => q.word)) {
+      for (const q of quizQuestions.filter(q => q.word)) {
         const item = grade.items.find(i => i.id === q.id); const w = progress.vocabulary.find(x => x.dutch === q.word);
         if (item && w) patchWord(w.dutch, { mastery: Math.max(5, Math.min(100, w.mastery + (item.correct ? 6 : -8))), correctRecall: w.correctRecall + (item.correct ? 1 : 0), wrongRecall: w.wrongRecall + (item.correct ? 0 : 1), nextReview: day(item.correct ? 3 : 1) });
       }
@@ -305,6 +408,7 @@ export default function Home() {
   }
 
   const partTitle = (n: number) => ["", "Vocabulary recall", "English → Dutch", "Dutch → English", "Build the sentence", "Conversation"][n];
+  const missed = quizGrade ? quizGrade.items.filter(x => !x.correct && x.correction) : [];
 
   return (
     <main className="shell">
@@ -315,10 +419,10 @@ export default function Home() {
 
       {tab === "home" && <div className="stack">
         <section className="hero card">
-          <div><div className="kicker">TODAY</div><h1>Learn Dutch by actually using it.</h1><p className="subtle">Short sessions combine spaced recall, conversation, corrections, and a quiz.</p></div>
+          <div><div className="kicker">TODAY</div><h1>Learn Dutch by actually using it.</h1><p className="subtle">Short sessions combine spaced recall, conversation, corrections, and a personalized quiz.</p></div>
           <div className="grid3">{[5,10,20].map(m => <button className="timeButton" key={m} onClick={() => startSession(m)}><strong>{m}</strong><span>min</span></button>)}</div>
         </section>
-        {activeMode && <section className="card"><div className="row"><div><div className="kicker">IN PROGRESS</div><strong>{activeMode === "quiz" ? "Your quiz is still waiting" : `${minutes}-minute session · ${stage === "review" ? "review" : `conversation ${Math.min(turns,targetTurns)}/${targetTurns}`}`}</strong><p className="subtle">You can move around the app without losing your place.</p></div><button className="primary compact" onClick={resumeActive}>Resume</button></div></section>}
+        {activeMode && <section className="card"><div className="row"><div><div className="kicker">SAVED IN PROGRESS</div><strong>{activeMode === "quiz" ? "Your personalized quiz is waiting" : `${minutes}-minute session · ${stage === "review" ? "review" : `conversation ${Math.min(turns,targetTurns)}/${targetTurns}`}`}</strong><p className="subtle">This session now survives tab changes, refreshes, and closing the app.</p></div><button className="primary compact" onClick={resumeActive}>Resume</button></div></section>}
         <section className="stats">
           <div className="stat"><strong>{dueWords.length}</strong><span>due today</span></div><div className="stat"><strong>{progress.wordsLearned}</strong><span>words seen</span></div><div className="stat"><strong>{progress.lastQuiz}%</strong><span>last quiz</span></div><div className="stat"><strong>{avgScore}%</strong><span>quiz avg</span></div>
         </section>
@@ -338,25 +442,31 @@ export default function Home() {
         {stage === "conversation" && <>
           <section className="coachStrip"><span>🇳🇱 Try Dutch first</span><span>🇺🇸 English fallback is allowed</span><span>↻ Corrections require a retry</span></section>
           <section className="chat">{messages.map((m, i) => <div key={i}>
-            <div className={`bubble ${m.role === "assistant" ? "tutor" : "user"}`}>{m.text}</div>
+            <div className={`bubble ${m.role === "assistant" ? "tutor" : "user"}`}>{cleanDisplay(m.text)}</div>
             {m.role === "assistant" && <div className="messageTools"><button onClick={() => speak(m.text)}>🔊 Listen</button>{m.translation && <button onClick={() => setShownTranslations(s => ({...s,[i]:!s[i]}))}>🇺🇸 Translate</button>}{m.hint && <button onClick={() => setShownHints(s => ({...s,[i]:!s[i]}))}>💡 Hint</button>}</div>}
             {shownTranslations[i] && m.translation && <div className="helper">{m.translation}</div>}{shownHints[i] && m.hint && <div className="helper">Hint: {m.hint}</div>}
             {m.correction && <div className="correction"><div className="kicker">CORRECTION</div><div><span className="strike">{m.correction.wrong}</span></div><p><b>Hint:</b> {m.correction.clue || m.correction.why}</p>{shownAnswers[i] ? <><div className="better">{m.correction.better}</div><small>{m.correction.why}</small></> : <button className="secondary" onClick={() => setShownAnswers(s => ({...s,[i]:true}))}>Show corrected sentence</button>}{m.retryRequired && <div className="retryFlag">↻ Try the idea again in Dutch before moving on.</div>}</div>}
           </div>)}{loading && <div className="bubble tutor">Even denken…</div>}{apiError && <div className="error">{apiError}</div>}</section>
           <form className="composer" onSubmit={sendMessage}><input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} placeholder="Dutch first — English if stuck…" autoComplete="off"/><button type="button" className="secondary mic" onClick={startVoice}>🎤</button><button className="iconButton" type="submit">↑</button></form>
-          {turns >= targetTurns && <button className="primary" onClick={beginQuiz}>Conversation complete — take quiz</button>}
+          {turns >= targetTurns && <button className="primary" onClick={beginQuiz}>Conversation complete — build my quiz</button>}
         </>}
       </div>}
 
       {tab === "review" && <div className="stack">
-        <section className="card"><h2 className="noTop">Spaced review</h2><p className="subtle">A word comes back just before you are likely to forget it. Production matters more than recognition.</p><button className="primary" onClick={() => startSession(5)}>{dueWords.length ? `Review ${Math.min(3,dueWords.length)} due words` : "Start 5-minute session"}</button></section>
+        <section className="card"><h2 className="noTop">Spaced review</h2><p className="subtle">A word comes back just before you are likely to forget it. Production matters more than recognition.</p><button className="primary" onClick={() => activeMode ? resumeActive() : startSession(5)}>{activeMode ? "Resume current session" : dueWords.length ? `Review ${Math.min(3,dueWords.length)} due words` : "Start 5-minute session"}</button></section>
         <div className="sectionTitle">Needs attention</div><div className="list">{[...progress.vocabulary].sort((a,b)=>a.mastery-b.mastery).slice(0,12).map(word => <div className="wordRow" key={word.id}><div><div className="word">{word.dutch}</div><div className="subtle">{word.pronunciation} · {word.english}</div><div className="progressBar"><span style={{width:`${word.mastery}%`}} /></div><div className="skillGrid"><span>Recall {word.correctRecall}/{word.correctRecall+word.wrongRecall || 0}</span><span>Use {word.correctUse}/{word.correctUse+word.wrongUse || 0}</span><span>Next {word.nextReview <= day(0) ? "today" : word.nextReview}</span></div></div><strong>{word.mastery}%</strong></div>)}</div>
       </div>}
 
-      {tab === "quiz" && <div className="stack"><section className="card"><div className="kicker">SESSION QUIZ</div><h2 className="noTopish">Retrieval, not recognition.</h2><p className="subtle">Parts 2 and 3 use different sentences. Sentence building includes distractor words. Blank answers receive no credit.</p></section>
-        <form onSubmit={gradeQuiz} className="stack">{[1,2,3,4,5].map(part => <section className="card" key={part}><div className="kicker">PART {part}</div><h3>{partTitle(part)}</h3>{QUIZ.filter(q=>q.part===part).map((q,idx) => <div className="quizItem" key={q.id}><label><b>{idx+1}. {q.prompt}</b></label>{q.tokens && <div className="tokens">{q.tokens.map((t,i)=><span key={`${t}-${i}`}>{t}</span>)}</div>}<input value={quizAnswers[q.id] || ""} onChange={e=>setQuizAnswers(a=>({...a,[q.id]:e.target.value}))} placeholder={part===1 ? "Dutch word…" : part===3 ? "English…" : "Your answer…"}/>{quizGrade && (()=>{const item=quizGrade.items.find(i=>i.id===q.id);return item ? <div className={item.correct ? "gradeLine good" : "gradeLine bad"}>{item.correct ? "✓ Correct" : `✕ ${item.correction || "Incorrect"}`}{item.explanation && <small>{item.explanation}</small>}</div> : null})()}</div>)}</section>)}
-          {!quizGrade ? <button className="primary" disabled={grading}>{grading ? "Grading strictly…" : "Submit quiz"}</button> : <section className="scoreCard card"><div className="score">{quizGrade.score}%</div><strong>{quizGrade.score >= 90 ? "Excellent" : quizGrade.score >= 80 ? "Strong work" : quizGrade.score >= 70 ? "Good learning data" : "Review the corrections"}</strong><p className="subtle">{quizGrade.coachNote}</p><button type="button" className="primary" onClick={finishSession}>Finish session</button></section>}
-        </form></div>}
+      {tab === "quiz" && <div className="stack">
+        <section className="card"><div className="kicker">PERSONALIZED SESSION QUIZ</div><h2 className="noTopish">Retrieval, not recognition.</h2><p className="subtle">Generated from your conversation, weak vocabulary, and recurring mistakes. Parts 2 and 3 use different sentences.</p></section>
+        {quizLoading ? <section className="card"><strong>Building your quiz…</strong><p className="subtle">Using what you just practiced and what you still need to strengthen.</p></section> : <form onSubmit={gradeQuiz} className="stack">{[1,2,3,4,5].map(part => <section className="card" key={part}><div className="kicker">PART {part}</div><h3>{partTitle(part)}</h3>{quizQuestions.filter(q=>q.part===part).map((q,idx) => <div className="quizItem" key={q.id}><label><b>{idx+1}. {q.prompt}</b></label>{q.tokens && <div className="tokens">{q.tokens.map((t,i)=><span key={`${t}-${i}`}>{t}</span>)}</div>}<input value={quizAnswers[q.id] || ""} onChange={e=>setQuizAnswers(a=>({...a,[q.id]:e.target.value}))} placeholder={part===1 ? "Dutch word…" : part===3 ? "English…" : "Your answer…"}/>{quizGrade && (()=>{const item=quizGrade.items.find(i=>i.id===q.id);return item ? <div className={item.correct ? "gradeLine good" : "gradeLine bad"}>{item.correct ? "✓ Correct" : `✕ ${item.correction || "Incorrect"}`}{item.explanation && <small>{item.explanation}</small>}</div> : null})()}</div>)}</section>)}
+          {apiError && <div className="error">{apiError}</div>}
+          {!quizGrade ? <button className="primary" disabled={grading}>{grading ? "Grading strictly…" : "Submit quiz"}</button> : <>
+            <section className="scoreCard card"><div className="score">{quizGrade.score}%</div><strong>{quizGrade.score >= 90 ? "Excellent" : quizGrade.score >= 80 ? "Strong work" : quizGrade.score >= 70 ? "Good learning data" : "Review the corrections"}</strong><p className="subtle">{quizGrade.coachNote}</p></section>
+            <section className="card"><div className="kicker">NOTEBOOK RECAP</div><h3 className="noTopish">Write these down if they were new or difficult.</h3>{sessionLearned.slice(-6).map((x,i)=><div className="mistake" key={`learn-${i}`}><div className="better">{x.dutch}</div><small>{x.english} · {x.pronunciation}</small></div>)}{missed.slice(0,6).map((x,i)=><div className="mistake" key={`miss-${i}`}><div className="better">{x.correction}</div>{x.explanation && <small>{x.explanation}</small>}</div>)}{!sessionLearned.length && !missed.length && <p className="subtle">Nothing special to copy today — nice work.</p>}<button type="button" className="primary" onClick={finishSession}>Finish session</button></section>
+          </>}
+        </form>}
+      </div>}
 
       {tab === "progress" && <div className="stack"><section className="stats"><div className="stat"><strong>{progress.wordsLearned}</strong><span>words seen</span></div><div className="stat"><strong>{progress.sessions}</strong><span>sessions</span></div><div className="stat"><strong>{avgScore}%</strong><span>quiz average</span></div><div className="stat"><strong>{immersionLevel}/4</strong><span>immersion level</span></div></section>
         <section className="card"><h2 className="noTop">Can-do progress</h2>{progress.canDo.map(item => <div className="canDo" key={item.label}><span>{item.status === "can" ? "✓" : item.status === "working" ? "◐" : "○"}</span><span>{item.label}</span><small>{item.status}</small></div>)}</section>
