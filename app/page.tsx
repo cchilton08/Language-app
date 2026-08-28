@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Tab = "home" | "learn" | "review" | "quiz" | "progress";
 type Stage = "review" | "conversation";
+type ActiveMode = "learn" | "quiz";
 type Correction = { wrong: string; better: string; why: string; clue?: string };
 type ChatMessage = {
   role: "assistant" | "user";
@@ -159,6 +160,7 @@ export default function Home() {
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizGrade, setQuizGrade] = useState<QuizGrade | null>(null);
   const [grading, setGrading] = useState(false);
+  const [activeMode, setActiveMode] = useState<ActiveMode | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { setProgress(migrateProgress()); setLoaded(true); }, []);
@@ -178,8 +180,18 @@ export default function Home() {
     const queue = dueWords.slice(0, reviewCount);
     setMinutes(m); setTurns(0); setPendingRetry(null); setMessages(starterMessages); setApiError("");
     setReviewQueue(queue); setReviewIndex(0); setReviewInput(""); setReviewResult(null);
-    setStage(queue.length ? "review" : "conversation"); setTab("learn");
+    setStage(queue.length ? "review" : "conversation"); setActiveMode("learn"); setTab("learn");
     setShownTranslations({}); setShownHints({}); setShownAnswers({});
+  }
+
+  function resumeActive() {
+    if (activeMode) setTab(activeMode);
+    else startSession(10);
+  }
+
+  function finishSession() {
+    setActiveMode(null);
+    setTab("home");
   }
 
   function submitReview(e: FormEvent) {
@@ -275,7 +287,7 @@ export default function Home() {
     rec.start();
   }
 
-  function beginQuiz() { setQuizAnswers({}); setQuizGrade(null); setTab("quiz"); }
+  function beginQuiz() { setQuizAnswers({}); setQuizGrade(null); setActiveMode("quiz"); setTab("quiz"); }
 
   async function gradeQuiz(e: FormEvent) {
     e.preventDefault(); setGrading(true); setQuizGrade(null);
@@ -306,6 +318,7 @@ export default function Home() {
           <div><div className="kicker">TODAY</div><h1>Learn Dutch by actually using it.</h1><p className="subtle">Short sessions combine spaced recall, conversation, corrections, and a quiz.</p></div>
           <div className="grid3">{[5,10,20].map(m => <button className="timeButton" key={m} onClick={() => startSession(m)}><strong>{m}</strong><span>min</span></button>)}</div>
         </section>
+        {activeMode && <section className="card"><div className="row"><div><div className="kicker">IN PROGRESS</div><strong>{activeMode === "quiz" ? "Your quiz is still waiting" : `${minutes}-minute session · ${stage === "review" ? "review" : `conversation ${Math.min(turns,targetTurns)}/${targetTurns}`}`}</strong><p className="subtle">You can move around the app without losing your place.</p></div><button className="primary compact" onClick={resumeActive}>Resume</button></div></section>}
         <section className="stats">
           <div className="stat"><strong>{dueWords.length}</strong><span>due today</span></div><div className="stat"><strong>{progress.wordsLearned}</strong><span>words seen</span></div><div className="stat"><strong>{progress.lastQuiz}%</strong><span>last quiz</span></div><div className="stat"><strong>{avgScore}%</strong><span>quiz avg</span></div>
         </section>
@@ -342,7 +355,7 @@ export default function Home() {
 
       {tab === "quiz" && <div className="stack"><section className="card"><div className="kicker">SESSION QUIZ</div><h2 className="noTopish">Retrieval, not recognition.</h2><p className="subtle">Parts 2 and 3 use different sentences. Sentence building includes distractor words. Blank answers receive no credit.</p></section>
         <form onSubmit={gradeQuiz} className="stack">{[1,2,3,4,5].map(part => <section className="card" key={part}><div className="kicker">PART {part}</div><h3>{partTitle(part)}</h3>{QUIZ.filter(q=>q.part===part).map((q,idx) => <div className="quizItem" key={q.id}><label><b>{idx+1}. {q.prompt}</b></label>{q.tokens && <div className="tokens">{q.tokens.map((t,i)=><span key={`${t}-${i}`}>{t}</span>)}</div>}<input value={quizAnswers[q.id] || ""} onChange={e=>setQuizAnswers(a=>({...a,[q.id]:e.target.value}))} placeholder={part===1 ? "Dutch word…" : part===3 ? "English…" : "Your answer…"}/>{quizGrade && (()=>{const item=quizGrade.items.find(i=>i.id===q.id);return item ? <div className={item.correct ? "gradeLine good" : "gradeLine bad"}>{item.correct ? "✓ Correct" : `✕ ${item.correction || "Incorrect"}`}{item.explanation && <small>{item.explanation}</small>}</div> : null})()}</div>)}</section>)}
-          {!quizGrade ? <button className="primary" disabled={grading}>{grading ? "Grading strictly…" : "Submit quiz"}</button> : <section className="scoreCard card"><div className="score">{quizGrade.score}%</div><strong>{quizGrade.score >= 90 ? "Excellent" : quizGrade.score >= 80 ? "Strong work" : quizGrade.score >= 70 ? "Good learning data" : "Review the corrections"}</strong><p className="subtle">{quizGrade.coachNote}</p><button type="button" className="primary" onClick={()=>setTab("home")}>Finish session</button></section>}
+          {!quizGrade ? <button className="primary" disabled={grading}>{grading ? "Grading strictly…" : "Submit quiz"}</button> : <section className="scoreCard card"><div className="score">{quizGrade.score}%</div><strong>{quizGrade.score >= 90 ? "Excellent" : quizGrade.score >= 80 ? "Strong work" : quizGrade.score >= 70 ? "Good learning data" : "Review the corrections"}</strong><p className="subtle">{quizGrade.coachNote}</p><button type="button" className="primary" onClick={finishSession}>Finish session</button></section>}
         </form></div>}
 
       {tab === "progress" && <div className="stack"><section className="stats"><div className="stat"><strong>{progress.wordsLearned}</strong><span>words seen</span></div><div className="stat"><strong>{progress.sessions}</strong><span>sessions</span></div><div className="stat"><strong>{avgScore}%</strong><span>quiz average</span></div><div className="stat"><strong>{immersionLevel}/4</strong><span>immersion level</span></div></section>
@@ -351,7 +364,7 @@ export default function Home() {
         <section className="card"><h2 className="noTop">Recurring corrections</h2>{progress.commonMistakes.slice(0,8).map((m,i)=><div className="mistake" key={i}><div className="strike">{m.wrong}</div><div className="better">{m.correct}</div>{m.why && <small>{m.why}</small>}</div>)}</section>
       </div>}
 
-      <nav className="nav"><button className={tab === "home" ? "active" : ""} onClick={()=>setTab("home")}>⌂<br/>Home</button><button className={tab === "learn" ? "active" : ""} onClick={()=>startSession(10)}>◉<br/>Learn</button><button className={tab === "review" ? "active" : ""} onClick={()=>setTab("review")}>↻<br/>Review</button><button className={tab === "progress" ? "active" : ""} onClick={()=>setTab("progress")}>▥<br/>Progress</button></nav>
+      <nav className="nav"><button className={tab === "home" ? "active" : ""} onClick={()=>setTab("home")}>⌂<br/>Home</button><button className={tab === "learn" || tab === "quiz" ? "active" : ""} onClick={resumeActive}>◉<br/>{activeMode ? "Resume" : "Learn"}</button><button className={tab === "review" ? "active" : ""} onClick={()=>setTab("review")}>↻<br/>Review</button><button className={tab === "progress" ? "active" : ""} onClick={()=>setTab("progress")}>▥<br/>Progress</button></nav>
     </main>
   );
 }
