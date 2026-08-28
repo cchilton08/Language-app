@@ -3,8 +3,16 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Dutch Tutor",
-  description: "A personal AI Dutch tutor for daily conversation practice.",
+  description: "A personal adaptive AI Dutch tutor for daily conversation practice.",
   applicationName: "Dutch Tutor",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
