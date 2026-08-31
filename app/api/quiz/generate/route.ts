@@ -26,7 +26,7 @@ const quizSchema = {
     questions: {
       type: "array",
       minItems: 5,
-      maxItems: 14,
+      maxItems: 11,
       items: {
         type: "object",
         properties: {
@@ -57,26 +57,27 @@ export async function POST(request: Request) {
     const learnedChunks = Array.isArray(body?.learnedChunks) ? body.learnedChunks.slice(0, 10) : [];
     const focusWords = Array.isArray(body?.focusWords) ? body.focusWords.slice(0, 8) : [];
     const mistakes = Array.isArray(body?.commonMistakes) ? body.commonMistakes.slice(0, 8) : [];
-    const targetCount = minutes === 5 ? 6 : minutes === 10 ? 9 : 13;
+    const targetCount = minutes === 5 ? 5 : minutes === 10 ? 7 : 10;
 
     const structure = minutes === 5
-      ? `6 questions total: Part 1 has 2 vocabulary/chunk recall; Part 2 has 1 English→Dutch; Part 3 has 1 different Dutch→English; Part 4 has 1 sentence build; Part 5 has 1 short conversation response.`
+      ? `5 questions total: Part 1 has 2 vocabulary/chunk recall; Part 2 has 1 English→Dutch; Part 3 has 1 different Dutch→English; Part 5 has 1 short conversation response.`
       : minutes === 10
-      ? `9 questions total: Part 1 has 3 vocabulary/chunk recall; Part 2 has 2 English→Dutch; Part 3 has 1 different Dutch→English; Part 4 has 1 sentence build; Part 5 has 2 short conversation responses.`
-      : `13 questions total: Part 1 has 4 vocabulary/chunk recall; Part 2 has 3 English→Dutch; Part 3 has 2 different Dutch→English; Part 4 has 2 sentence builds; Part 5 has 2 conversation responses.`;
+      ? `7 questions total: Part 1 has 2 vocabulary/chunk recall; Part 2 has 2 English→Dutch; Part 3 has 1 different Dutch→English; Part 4 has 1 sentence build; Part 5 has 1 short conversation response.`
+      : `10 questions total: Part 1 has 3 vocabulary/chunk recall; Part 2 has 2 English→Dutch; Part 3 has 2 different Dutch→English; Part 4 has 1 sentence build; Part 5 has 2 conversation responses.`;
 
     const instructions = `Create a ${targetCount}-question adaptive Dutch retrieval quiz for an English-speaking learner of natural STANDARD NETHERLANDS DUTCH (nl-NL), level ${level}/4, after a ${minutes}-minute study session.
 
 PURPOSE
-Strengthen long-term speaking and understanding, not recognition. The learner is a true beginner, so the quiz must expose gaps without being demoralizing or testing material never taught.
+Strengthen long-term speaking and understanding, not recognition. The learner is a true beginner. The quiz should be short enough that the whole session stays near the selected time.
 
 CONTENT MIX
-- About 70% should directly retrieve today's focus chunks, weak words, or recurring structures.
-- About 30% should test TRANSFER: the same language in a new simple context.
+- About 75% should directly retrieve today's focus chunks, weak words, or recurring structures.
+- About 25% should test TRANSFER: the same language in a new simple context.
 - Never make Part 3 reveal Part 2 answers.
 - Never copy a complete corrected sentence verbatim from the conversation; transform it.
 - Use high-frequency everyday Dutch only.
-- At Level 1, keep sentences short and use structures the learner has actually encountered.
+- At Level 1, test only structures the learner has actually encountered.
+- No hints, clues, multiple choice, or answer leakage in the prompts.
 
 STRUCTURE
 ${structure}
@@ -85,9 +86,8 @@ RULES
 - Part 1 prompt is English; learner types exact Dutch dictionary form or useful chunk. Set word to that Dutch answer.
 - Part 2 is English→Dutch productive recall.
 - Part 3 is Dutch→English using completely different sentence ideas from Part 2.
-- Part 4 prompt begins with "Build:" and gives the English target. Include required Dutch words scrambled plus 2-3 believable distractors.
+- Part 4, when included, begins with "Build:" and gives the English target. Include required Dutch words scrambled plus 2-3 believable distractors.
 - Part 5 is an open-ended Dutch question with multiple valid answers.
-- No multiple choice.
 - For non-vocabulary items set word=null. Without word bank set tokens=null.
 
 Today's focus: ${JSON.stringify(focusWords)}
@@ -103,7 +103,7 @@ Recent conversation: ${JSON.stringify(transcript)}`;
         model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
         instructions,
         input: "Generate the personalized retrieval quiz now.",
-        max_output_tokens: 1900,
+        max_output_tokens: 1700,
         text: { verbosity: "low", format: { type: "json_schema", name: "dutch_personalized_quiz", strict: true, schema: quizSchema } },
       }),
     });
