@@ -15,14 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Patch recall matching
-        shell: python
         run: |
+          python - <<'PY'
           from pathlib import Path
           p = Path('app/DutchTutorV5.tsx')
           s = p.read_text()
           marker = 'const uid = () => Math.random().toString(36).slice(2, 10);'
           helper = r'''
-// Recall grading should ignore case, punctuation and spacing, and forgive only tiny spelling slips.
+// Recall grading ignores case, punctuation, accents and spacing, and forgives only tiny spelling slips.
 // It deliberately does NOT accept missing words or a different sentence as correct.
 function editDistance(a:string,b:string){
   const prev=Array.from({length:b.length+1},(_,i)=>i);
@@ -41,9 +41,7 @@ function answerMatches(input:string,target:string){
   const b=normalize(target).normalize('NFD').replace(/[\u0300-\u036f]/g,'');
   if(!a||!b)return false;
   if(a===b)return true;
-  // Treat accidental spacing differences such as "dankjewel" vs "dank je wel" as equivalent.
   if(a.replace(/\s/g,'')===b.replace(/\s/g,''))return true;
-  // Allow a very small typo budget, but never enough to hide a missing word.
   const maxEdits=b.length>=18?2:b.length>=7?1:0;
   if(Math.abs(a.length-b.length)>maxEdits)return false;
   return editDistance(a,b)<=maxEdits;
@@ -59,6 +57,7 @@ function answerMatches(input:string,target:string){
           for old,new in replacements.items():
               s = s.replace(old,new)
           p.write_text(s)
+          PY
       - name: Commit patch
         run: |
           if git diff --quiet; then
