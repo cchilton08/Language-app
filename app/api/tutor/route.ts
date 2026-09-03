@@ -14,6 +14,12 @@ function parseStructuredOutput(data:any){
   if(!text)throw new Error("Tutor did not return text. Please try again.");
   try{return JSON.parse(text)}catch{const a=text.indexOf("{");const b=text.lastIndexOf("}");if(a>=0&&b>a)return JSON.parse(text.slice(a,b+1));throw new Error("Tutor response could not be parsed. Please try again.")}
 }
+function completeLearnedChunk(item:any){
+  const dutch=String(item?.dutch??"").trim();
+  if(!dutch)return false;
+  if(dutch.includes("…")||dutch.includes("..."))return false;
+  return true;
+}
 
 const tutorSchema={
   type:"object",
@@ -82,6 +88,9 @@ Reuse weak material in new contexts.
 
 NEW MATERIAL + MEMORY HOOKS
 - The app already teaches vocabulary before conversation, so introduce at most ONE extra high-value chunk in most replies, and often zero.
+- EVERY learnedChunk must be a COMPLETE standalone Dutch word, fixed phrase, or complete sentence that can be recalled exactly later.
+- NEVER put ellipses (... or …), blanks, underscores, slashes that mean 'choose one', or unfinished stems such as 'Ik studeer en ...' in learnedChunks.
+- If a pattern needs a variable slot, save a complete useful example instead. Example: use 'Ik studeer en ik train.' rather than 'Ik studeer en ...'.
 - For EVERY learnedChunk, include a short memorable memoryHook that links the Dutch sound/spelling to the English meaning. Example: nee = no, pronounced 'nay' → imagine a horse saying 'neigh' to mean no.
 - Prefer vivid, simple hooks. Do not distort the actual pronunciation or meaning just to force a mnemonic.
 - The hook is an encoding aid; the learner should still retrieve the Dutch without seeing the answer.
@@ -92,12 +101,13 @@ OUTPUT
 - hint: partial cue, never the full hidden answer.
 - correction: null if correct; otherwise wrong/better/why/clue.
 - retryRequired: true when the learner should retry.
-- learnedChunks: 0-1 genuinely useful item most turns; each must include dutch, english, learner-friendly pronunciation, and memoryHook.`;
+- learnedChunks: 0-1 genuinely useful COMPLETE item most turns; each must include dutch, english, learner-friendly pronunciation, and memoryHook.`;
 
     const apiResponse=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:process.env.OPENAI_MODEL||"gpt-5.6-luna",instructions,input:`${transcript}\nLEARNER: ${message}`,max_output_tokens:1100,text:{verbosity:"low",format:{type:"json_schema",name:"dutch_tutor_response",strict:true,schema:tutorSchema}}})});
     const data=await apiResponse.json();
     if(!apiResponse.ok)return NextResponse.json({error:data?.error?.message||"OpenAI request failed."},{status:apiResponse.status});
     const parsed=parseStructuredOutput(data);
-    return NextResponse.json({reply:parsed.reply,translation:parsed.translation,hint:parsed.hint,correction:parsed.correction,retryRequired:Boolean(parsed.retryRequired),learnedChunks:Array.isArray(parsed.learnedChunks)?parsed.learnedChunks.slice(0,2):[]});
+    const learnedChunks=Array.isArray(parsed.learnedChunks)?parsed.learnedChunks.filter(completeLearnedChunk).slice(0,2):[];
+    return NextResponse.json({reply:parsed.reply,translation:parsed.translation,hint:parsed.hint,correction:parsed.correction,retryRequired:Boolean(parsed.retryRequired),learnedChunks});
   }catch(error){return NextResponse.json({error:error instanceof Error?error.message:"Unexpected tutor error."},{status:500})}
 }
