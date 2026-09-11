@@ -1,5 +1,5 @@
-import DutchTutorV8 from "./DutchTutorV8";
+import DutchTutorV9 from "./DutchTutorV9";
 
 export default function Page() {
-  return <DutchTutorV8 />;
+  return <DutchTutorV9 />;
 }
